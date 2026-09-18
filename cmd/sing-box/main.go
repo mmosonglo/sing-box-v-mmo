@@ -2,7 +2,10 @@
 
 package main
 
-import "github.com/sagernet/sing-box/log"
+import (
+	_ "github.com/sagernet/sing-box/common/autotune"
+	"github.com/sagernet/sing-box/log"
+)
 
 func main() {
 	if err := mainCommand.Execute(); err != nil {
