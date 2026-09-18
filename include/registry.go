@@ -81,7 +81,6 @@ func OutboundRegistry() *outbound.Registry {
 	vless.RegisterOutbound(registry)
 
 	registerQUICOutbounds(registry)
-	registerWireGuardOutbound(registry)
 	registerStubForRemovedOutbounds(registry)
 
 	return registry
@@ -89,9 +88,6 @@ func OutboundRegistry() *outbound.Registry {
 
 func EndpointRegistry() *endpoint.Registry {
 	registry := endpoint.NewRegistry()
-
-	registerWireGuardEndpoint(registry)
-	registerTailscaleEndpoint(registry)
 
 	return registry
 }
@@ -110,7 +106,6 @@ func DNSTransportRegistry() *dns.TransportRegistry {
 
 	registerQUICTransports(registry)
 	registerDHCPTransport(registry)
-	registerTailscaleTransport(registry)
 
 	return registry
 }
@@ -120,8 +115,6 @@ func ServiceRegistry() *service.Registry {
 
 	resolved.RegisterService(registry)
 	ssmapi.RegisterService(registry)
-
-	registerDERPService(registry)
 
 	return registry
 }
