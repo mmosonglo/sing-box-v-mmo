@@ -8,7 +8,10 @@
 /dist/
 /sing-box
 /sing-box.exe
+/sing-box_*
+/test_arm64
 /build/
+/release/bin/
 /*.jar
 /*.aar
 /*.xcframework/
