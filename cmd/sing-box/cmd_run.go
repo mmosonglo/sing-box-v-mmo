@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box"
+	"github.com/sagernet/sing-box/common/butler"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -134,6 +135,15 @@ func create() (*box.Box, context.CancelFunc, error) {
 		options.Log.DisableColor = true
 	}
 	ctx, cancel := context.WithCancel(globalCtx)
+
+	// Trạm kiểm soát cất cánh tuần tự & Dự báo RAM an toàn (v-mmo Admission Controller)
+	unlockGate, err := butler.AcquireStartupGate(ctx)
+	if err != nil {
+		cancel()
+		return nil, nil, err
+	}
+	defer unlockGate()
+
 	instance, err := box.New(box.Options{
 		Context: ctx,
 		Options: options,

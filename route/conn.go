@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/butler"
 	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/common/tlsfragment"
 	C "github.com/sagernet/sing-box/constant"
@@ -56,6 +57,17 @@ func (m *ConnectionManager) Close() error {
 }
 
 func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
+	srcAddr := metadata.Source.Addr
+	if !butler.Acquire(srcAddr) {
+		N.CloseOnHandshakeFailure(conn, onClose, E.New("connection throttled by butler governor"))
+		return
+	}
+	var releaseOnce sync.Once
+	onClose = N.AppendClose(onClose, func(it error) {
+		releaseOnce.Do(func() {
+			butler.Release(srcAddr)
+		})
+	})
 	ctx = adapter.WithContext(ctx, &metadata)
 	var (
 		remoteConn net.Conn
@@ -107,6 +119,17 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 }
 
 func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dialer, conn N.PacketConn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
+	srcAddr := metadata.Source.Addr
+	if !butler.Acquire(srcAddr) {
+		N.CloseOnHandshakeFailure(conn, onClose, E.New("udp packet throttled by butler governor"))
+		return
+	}
+	var releaseOnce sync.Once
+	onClose = N.AppendClose(onClose, func(it error) {
+		releaseOnce.Do(func() {
+			butler.Release(srcAddr)
+		})
+	})
 	ctx = adapter.WithContext(ctx, &metadata)
 	var (
 		remotePacketConn   net.PacketConn
@@ -173,8 +196,8 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 	}
 	err = N.ReportPacketConnHandshakeSuccess(conn, remotePacketConn)
 	if err != nil {
-		conn.Close()
 		remotePacketConn.Close()
+		N.CloseOnHandshakeFailure(conn, onClose, err)
 		m.logger.ErrorContext(ctx, "report handshake success: ", err)
 		return
 	}
