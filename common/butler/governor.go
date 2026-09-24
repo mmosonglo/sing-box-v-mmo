@@ -94,35 +94,26 @@ func Release(addr netip.Addr) {
 	slot := getSlot(addr)
 
 	decremented := false
-	// Giảm an toàn ActiveConns bằng CAS Loop (không bao giờ âm, không ghi đè cứng)
 	for {
 		curr := slot.ActiveConns.Load()
 		if curr <= 0 {
-			break
+			return // Slot không có kết nối nào để trừ -> Thoát ngay, không trừ total
 		}
 		if slot.ActiveConns.CompareAndSwap(curr, curr-1) {
 			decremented = true
+			if curr-1 == 0 {
+				slot.IsActive.Store(false)
+			}
 			break
 		}
+		runtime.Gosched() // Chống busy-spin trên CPU yếu như MT7621
 	}
 
-	// CHỐNG DRIFT: Tuyệt đối không trừ totalActiveConns nếu slot chưa từng được trừ!
-	if !decremented {
-		return
+	// Khi đã trừ slot thành công, BẮT BUỘC trừ totalActiveConns nguyên tử
+	if decremented {
+		totalActiveConns.Add(-1)
+		lastTrafficNano.Store(time.Now().UnixNano())
 	}
-
-	// Giảm an toàn totalActiveConns bằng CAS Loop
-	for {
-		currTot := totalActiveConns.Load()
-		if currTot <= 0 {
-			break
-		}
-		if totalActiveConns.CompareAndSwap(currTot, currTot-1) {
-			break
-		}
-	}
-
-	lastTrafficNano.Store(time.Now().UnixNano())
 }
 
 // TotalActiveConnections trả về tổng số kết nối đang hoạt động toàn hệ thống

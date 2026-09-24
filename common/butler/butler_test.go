@@ -485,4 +485,51 @@ func BenchmarkGetEffectiveMaxSystemConnsZeroAlloc(b *testing.B) {
 	}
 }
 
+func TestZRAMZeroHandling(t *testing.T) {
+	defer func() {
+		lastMemAvailKB.Store(80 * 1024)
+		lastSwapFreeKB.Store(100 * 1024)
+		isResourceCritical.Store(false)
+		pausedCutoffNano.Store(0)
+	}()
+
+	// Khi RAM vật lý thấp (12MB < 15MB) VÀ ZRAM Swap cạn kiệt hoàn toàn (0 KB)
+	lastMemAvailKB.Store(12 * 1024)
+	lastSwapFreeKB.Store(0)
+	kernelConntrackCount.Store(1000)
+	kernelConntrackMax.Store(16384)
+
+	updateResourceProtectionAndShedding(2)
+
+	if !IsResourceCritical() {
+		t.Fatal("expected IsResourceCritical to be true when ZRAM Swap is 0 KB and RAM is low")
+	}
+}
+
+func TestReleasePreventsPositiveDrift(t *testing.T) {
+	addr := netip.MustParseAddr("192.168.1.188")
+	slot := getSlot(addr)
+	slot.ActiveConns.Store(0)
+	totalActiveConns.Store(0)
+
+	// Gọi Release trên slot rỗng không được làm âm hay sai lệch total
+	Release(addr)
+	if totalActiveConns.Load() != 0 {
+		t.Fatalf("expected totalActiveConns to remain 0 after empty release, got %d", totalActiveConns.Load())
+	}
+
+	// Chu kỳ Acquire và Release bình thường
+	if !Acquire(addr) {
+		t.Fatal("expected Acquire to succeed")
+	}
+	if totalActiveConns.Load() != 1 {
+		t.Fatalf("expected totalActiveConns to be 1, got %d", totalActiveConns.Load())
+	}
+	Release(addr)
+	if totalActiveConns.Load() != 0 {
+		t.Fatalf("expected totalActiveConns to return to 0, got %d", totalActiveConns.Load())
+	}
+}
+
+
 

@@ -376,7 +376,7 @@ func updateResourceProtectionAndShedding(activeCount int32) {
 	kcMax := kernelConntrackMax.Load()
 	kcCritical := kcCount > 0 && kcMax > 0 && (kcCount*100/kcMax >= 85)
 
-	isCritical := (availKB > 0 && availKB < 15*1024 && swapFreeKB > 0 && swapFreeKB < 30*1024) ||
+	isCritical := (availKB > 0 && availKB < 15*1024 && swapFreeKB >= 0 && swapFreeKB < 30*1024) ||
 		(availKB > 0 && availKB < 10*1024) ||
 		(totalConns >= maxSysConns) ||
 		kcCritical

@@ -18,18 +18,19 @@ OPENWRT_VERSION ?= 1.12.25
 OPENWRT_LDFLAGS = -X 'github.com/sagernet/sing-box/constant.Version=$(OPENWRT_VERSION)' -s -w -buildid=
 
 openwrt_arm64:
-	mkdir -p release/bin
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$(OPENWRT_LDFLAGS)" -tags "$(OPENWRT_TAGS)" -o release/bin/sing-box_$(OPENWRT_VERSION)_openwrt_arm64 $(MAIN)
+	mkdir -p release/butler
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$(OPENWRT_LDFLAGS)" -tags "$(OPENWRT_TAGS)" -o release/butler/sing-box_$(OPENWRT_VERSION)_openwrt_arm64 $(MAIN)
 
 openwrt_amd64:
-	mkdir -p release/bin
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$(OPENWRT_LDFLAGS)" -tags "$(OPENWRT_TAGS)" -o release/bin/sing-box_$(OPENWRT_VERSION)_openwrt_amd64 $(MAIN)
+	mkdir -p release/butler
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$(OPENWRT_LDFLAGS)" -tags "$(OPENWRT_TAGS)" -o release/butler/sing-box_$(OPENWRT_VERSION)_openwrt_amd64 $(MAIN)
 
 openwrt_mt7621:
-	mkdir -p release/bin
-	CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build -trimpath -ldflags "$(OPENWRT_LDFLAGS)" -tags "$(OPENWRT_TAGS)" -o release/bin/sing-box_$(OPENWRT_VERSION)_openwrt_mt7621 $(MAIN)
+	mkdir -p release/butler
+	CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build -trimpath -ldflags "$(OPENWRT_LDFLAGS)" -tags "$(OPENWRT_TAGS)" -o release/butler/sing-box_$(OPENWRT_VERSION)_openwrt_mt7621 $(MAIN)
 
 openwrt_all: openwrt_arm64 openwrt_amd64 openwrt_mt7621
+	cd release/butler && md5sum sing-box_$(OPENWRT_VERSION)_* > MD5SUMS.txt
 
 build:
 	export GOTOOLCHAIN=local && \

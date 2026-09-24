@@ -33,8 +33,8 @@ var (
 )
 
 func onTrafficActive() {
-	isDeepCleaned.Store(false)
-	if !isTrafficActive.Swap(true) {
+	wasDeep := isDeepCleaned.Swap(false)
+	if !isTrafficActive.Swap(true) || wasDeep {
 		activeLimit := currentProfile.ActiveMemoryLimit
 		if activeLimit <= 0 {
 			activeLimit = 48 * 1024 * 1024
@@ -110,7 +110,11 @@ func handleIdleTransitions() {
 		// Deep Idle sau 45 giây liên tục không có kết nối nào:
 		// Chạy ONE-SHOT DUY NHẤT 1 LẦN, đặt cờ isDeepCleaned để KHÔNG lặp lại dồn dập
 		if idleDur >= time.Duration(IdleCooldownSeconds)*time.Second {
-			if !isDeepCleaned.Swap(true) {
+			if totalActiveConns.Load() == 0 && !isDeepCleaned.Swap(true) {
+				if totalActiveConns.Load() > 0 {
+					isDeepCleaned.Store(false)
+					return
+				}
 				debug.SetGCPercent(IdleGCPercent)
 				limit := currentProfile.IdleMemoryLimit
 				if limit <= 0 {
@@ -131,7 +135,7 @@ func checkMemoryAndZramHarmony() {
 	if availKB > 0 {
 		lastMemAvailKB.Store(availKB)
 	}
-	if swapFreeKB > 0 {
+	if swapFreeKB >= 0 {
 		lastSwapFreeKB.Store(swapFreeKB)
 	}
 
@@ -142,7 +146,7 @@ func checkMemoryAndZramHarmony() {
 	//    - RAM vật lý khả dụng MemAvailable < 15MB (15,360 KB)
 	//    - VÀ ZRAM Swap cũng đã cạn kiệt SwapFree < 30MB (30,720 KB)
 	//    (Hoặc trường hợp cực đoan: MemAvailable < 8MB)
-	isCritical := (availKB > 0 && availKB < 15*1024 && swapFreeKB > 0 && swapFreeKB < 30*1024) ||
+	isCritical := (availKB > 0 && availKB < 15*1024 && swapFreeKB >= 0 && swapFreeKB < 30*1024) ||
 		(availKB > 0 && availKB < 8*1024)
 
 	if !isCritical {

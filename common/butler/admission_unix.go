@@ -126,6 +126,11 @@ func surveySingBoxMemoryCost() (int64, int) {
 			continue
 		}
 
+		pid, err := strconv.Atoi(name)
+		if err != nil || pid == os.Getpid() {
+			continue
+		}
+
 		comm, err := os.ReadFile("/proc/" + name + "/comm")
 		if err != nil || !bytes.Equal(bytes.TrimSpace(comm), []byte("sing-box")) {
 			continue
