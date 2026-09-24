@@ -1,0 +1,132 @@
+name: Build OpenWrt sing-box
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. 1.12.25)'
+        required: true
+        default: '1.12.25'
+
+env:
+  GO_VERSION: '1.23'
+  BUILD_TAGS: 'with_utls,with_clash_api'
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: arm64
+            goos: linux
+            goarch: arm64
+            gomips: ''
+          - name: amd64
+            goos: linux
+            goarch: amd64
+            gomips: ''
+          - name: mt7621
+            goos: linux
+            goarch: mipsle
+            gomips: softfloat
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOMIPS: ${{ matrix.gomips }}
+        run: |
+          go build -trimpath \
+            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${{ steps.version.outputs.version }}' -s -w -buildid=" \
+            -tags "${{ env.BUILD_TAGS }}" \
+            -o sing-box_${{ steps.version.outputs.version }}_openwrt_${{ matrix.name }} \
+            ./cmd/sing-box
+
+      - name: Show binary info
+        run: |
+          ls -lh sing-box_*
+          file sing-box_*
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sing-box_${{ steps.version.outputs.version }}_openwrt_${{ matrix.name }}
+          path: sing-box_${{ steps.version.outputs.version }}_openwrt_${{ matrix.name }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lhR artifacts/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: sing-box ${{ github.ref_name }} (OpenWrt Lightweight)
+          body: |
+            ## sing-box ${{ github.ref_name }} — OpenWrt Pure Lightweight Build
+
+            Phiên bản tối ưu cho Router OpenWrt. Chỉ bao gồm:
+            - **Outbound**: Shadowsocks, VLess, VMess, Trojan, SOCKS5, HTTP, Direct, Block
+            - **Inbound**: TUN, Redirect, TProxy, Mixed, SOCKS, HTTP
+            - **DNS**: DoH, DoT, FakeIP, Hosts
+            - **Features**: uTLS, Clash API, Selector, URLTest, GeoIP, GeoSite
+
+            Build tags: `with_utls,with_clash_api`
+
+            ### Binary Sizes
+            | Architecture | File | Target |
+            |:---|:---|:---|
+            | ARM64 | `sing-box_*_openwrt_arm64` | Raspberry Pi, NanoPi, most modern routers |
+            | AMD64 | `sing-box_*_openwrt_amd64` | x86 soft routers, VMs |
+            | MT7621 | `sing-box_*_openwrt_mt7621` | Xiaomi, Newifi, D-Team routers (MIPS) |
+
+            ### RAM Check on Router
+            ```bash
+            for pid in $(pgrep sing-box); do
+                echo "PID $pid:"
+                grep -i -E 'VmRSS|VmHWM' /proc/$pid/status
+            done
+            ```
+          files: artifacts/*
+          draft: true
+          prerelease: false
