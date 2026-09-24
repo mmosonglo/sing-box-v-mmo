@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box"
+	"github.com/sagernet/sing-box/common/butler"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -123,8 +124,20 @@ func readConfigAndMerge() (option.Options, error) {
 }
 
 func create() (*box.Box, context.CancelFunc, error) {
+	ctx, cancel := context.WithCancel(globalCtx)
+
+	// Trạm kiểm soát cất cánh tuần tự & Dự báo RAM an toàn (v-mmo Admission Controller)
+	// Đặt trước readConfigAndMerge để đỉnh RAM giải mã JSON cũng được bảo vệ tuần tự
+	unlockGate, err := butler.AcquireStartupGate(ctx)
+	if err != nil {
+		cancel()
+		return nil, nil, err
+	}
+
 	options, err := readConfigAndMerge()
 	if err != nil {
+		unlockGate()
+		cancel()
 		return nil, nil, err
 	}
 	if disableColor {
@@ -133,11 +146,15 @@ func create() (*box.Box, context.CancelFunc, error) {
 		}
 		options.Log.DisableColor = true
 	}
-	ctx, cancel := context.WithCancel(globalCtx)
+
 	instance, err := box.New(box.Options{
 		Context: ctx,
 		Options: options,
 	})
+
+	// GIẢI PHÓNG KHÓA NGAY KHI XONG CẤU HÌNH & DỌN HEAP (Không giữ qua instance.Start mạng)
+	unlockGate()
+
 	if err != nil {
 		cancel()
 		return nil, nil, E.Cause(err, "create service")
