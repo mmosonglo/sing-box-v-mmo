@@ -13,7 +13,7 @@ on:
 
 env:
   GO_VERSION: '1.23'
-  BUILD_TAGS: 'with_utls,with_clash_api'
+  BUILD_TAGS: 'with_utls'
 
 jobs:
   build:
@@ -84,7 +84,7 @@ jobs:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
 
@@ -98,35 +98,36 @@ jobs:
       - name: List artifacts
         run: ls -lhR artifacts/
 
+      - name: Compute Tag & Title
+        id: release_info
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG_NAME="${{ github.ref_name }}-v${{ github.event.inputs.version || '1.12.25' }}"
+            TITLE="sing-box 1.12.25 (${{ github.ref_name }})"
+          else
+            TAG_NAME="${{ github.ref_name }}"
+            TITLE="sing-box ${{ github.ref_name }}"
+          fi
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          name: sing-box ${{ github.ref_name }} (OpenWrt Lightweight)
+          tag_name: ${{ steps.release_info.outputs.tag_name }}
+          name: ${{ steps.release_info.outputs.title }}
           body: |
-            ## sing-box ${{ github.ref_name }} — OpenWrt Pure Lightweight Build
+            ## ${{ steps.release_info.outputs.title }}
 
-            Phiên bản tối ưu cho Router OpenWrt. Chỉ bao gồm:
-            - **Outbound**: Shadowsocks, VLess, VMess, Trojan, SOCKS5, HTTP, Direct, Block
-            - **Inbound**: TUN, Redirect, TProxy, Mixed, SOCKS, HTTP
-            - **DNS**: DoH, DoT, FakeIP, Hosts
-            - **Features**: uTLS, Clash API, Selector, URLTest, GeoIP, GeoSite
+            Phiên bản tối ưu chuyên biệt cho Router OpenWrt:
+            - **Cổng cất cánh tuần tự**: Khóa POSIX `flock` + Dự báo RAM an toàn (chống sập khi Passwall2 nạp nhiều node).
+            - **Kích thước siêu nhẹ**: Binary chỉ ~14.6MB (ARM64).
+            - **Build tags**: `with_utls`.
 
-            Build tags: `with_utls,with_clash_api`
-
-            ### Binary Sizes
-            | Architecture | File | Target |
-            |:---|:---|:---|
-            | ARM64 | `sing-box_*_openwrt_arm64` | Raspberry Pi, NanoPi, most modern routers |
-            | AMD64 | `sing-box_*_openwrt_amd64` | x86 soft routers, VMs |
-            | MT7621 | `sing-box_*_openwrt_mt7621` | Xiaomi, Newifi, D-Team routers (MIPS) |
-
-            ### RAM Check on Router
-            ```bash
-            for pid in $(pgrep sing-box); do
-                echo "PID $pid:"
-                grep -i -E 'VmRSS|VmHWM' /proc/$pid/status
-            done
-            ```
+            ### Danh sách Binary Đính kèm:
+            - `sing-box_*_openwrt_arm64`: Router ARM64 (Cortex-A53 / MT7981)
+            - `sing-box_*_openwrt_amd64`: Mini PC x86 / AMD64
+            - `sing-box_*_openwrt_mt7621`: Router MIPSle (softfloat)
           files: artifacts/*
-          draft: true
+          draft: false
           prerelease: false
