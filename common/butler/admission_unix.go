@@ -70,13 +70,21 @@ func AcquireStartupGate(ctx context.Context) (func(), error) {
 			return func() {}, errors.New("insufficient memory: startup aborted to prevent router OOM crash")
 		}
 
+		// KHỬ HEAD-OF-LINE BLOCKING: Nhả khóa trước khi ngủ để các tiến trình khác không bị nghẽn
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+
 		select {
 		case <-ctx.Done():
-			_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 			f.Close()
 			return func() {}, ctx.Err()
 		case <-time.After(QueueRetryInterval):
 			// Đợi 500ms để Linux đẩy bớt trang tĩnh vào ZRAM hoặc các tiến trình khác dọn dẹp
+		}
+
+		// Thử lấy lại khóa độc quyền sau khi tỉnh giấc
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+			f.Close()
+			return func() {}, nil
 		}
 	}
 

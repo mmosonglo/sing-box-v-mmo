@@ -46,7 +46,7 @@ func readCPUStats() (usagePercent int, loadAvg string, tempC int) {
 					prevTotal := lastCPUTotal.Swap(total)
 					prevIdle := lastCPUIdle.Swap(idle)
 
-					if prevTotal > 0 && total > prevTotal {
+					if prevTotal > 0 && total > prevTotal && idle >= prevIdle {
 						diffTotal := total - prevTotal
 						diffIdle := idle - prevIdle
 						if diffTotal > diffIdle {

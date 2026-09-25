@@ -19,14 +19,15 @@ var (
 )
 
 const (
-	maxRejections        = 10
+	maxRejections         = 10
 	rejectionsLogFilePath = "/tmp/sing-box-rejections.log"
+	maxLogFileSize        = 32 * 1024 // 32KB trần an toàn tuyệt đối cho tmpfs RAM
 )
 
 // RecordRejection lưu vết từ chối do thiếu RAM:
 // 1. Cập nhật in-memory ring-buffer.
-// 2. Ghi append 1 dòng JSON vào file chia sẻ /tmp/sing-box-rejections.log để ngay cả khi tiến trình exit,
-//    tiến trình Leader vẫn đọc được và hiển thị lên bảng ACL LuCI.
+// 2. Tự động xoay vòng (logrotate/truncate) nếu file vượt 32KB để bảo vệ RAM router.
+// 3. Ghi append 1 dòng JSON vào file chia sẻ IPC để Leader đọc và đẩy lên bảng ACL LuCI.
 func RecordRejection(reason, detail string) {
 	rejectionsLock.Lock()
 	defer rejectionsLock.Unlock()
@@ -42,12 +43,37 @@ func RecordRejection(reason, detail string) {
 		rejectionsList = rejectionsList[len(rejectionsList)-maxRejections:]
 	}
 
-	// Ghi append ra file chia sẻ IPC
+	// Ghi an toàn có giới hạn kích thước ra file chia sẻ IPC
 	if line, err := json.Marshal(rec); err == nil {
+		if fi, err := os.Stat(rejectionsLogFilePath); err == nil && fi.Size() > maxLogFileSize {
+			truncateRejectionsLogFile()
+		}
 		if f, err := os.OpenFile(rejectionsLogFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
 			_, _ = f.Write(append(line, '\n'))
 			_ = f.Close()
 		}
+	}
+}
+
+func truncateRejectionsLogFile() {
+	data, err := os.ReadFile(rejectionsLogFilePath)
+	if err != nil {
+		return
+	}
+	lines := splitLines(data)
+	if len(lines) > 20 {
+		lines = lines[len(lines)-20:]
+	}
+	tmpPath := rejectionsLogFilePath + ".tmp"
+	var out []byte
+	for _, l := range lines {
+		if len(l) > 0 {
+			out = append(out, l...)
+			out = append(out, '\n')
+		}
+	}
+	if err := os.WriteFile(tmpPath, out, 0o644); err == nil {
+		_ = os.Rename(tmpPath, rejectionsLogFilePath)
 	}
 }
 
@@ -70,7 +96,6 @@ func GetRejections() []RejectionRecord {
 			}
 		}
 		if len(fileRecs) > 0 {
-			// Giới hạn maxRejections
 			if len(fileRecs) > maxRejections {
 				fileRecs = fileRecs[len(fileRecs)-maxRejections:]
 			}

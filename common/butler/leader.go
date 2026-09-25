@@ -8,9 +8,10 @@ import (
 )
 
 var (
-	isLeader    atomic.Bool
-	leaderMutex sync.Mutex
-	lockFile    *os.File
+	isLeader     atomic.Bool
+	isTerminated atomic.Bool
+	leaderMutex  sync.Mutex
+	lockFile     *os.File
 )
 
 const LockFilePath = "/tmp/sing-box-butler.lock"
@@ -21,7 +22,7 @@ func startLeaderElection() {
 }
 
 func electionLoop() {
-	for {
+	for !isTerminated.Load() {
 		if tryAcquireLeadership() {
 			isLeader.Store(true)
 			// Trở thành Quản Gia Trưởng: Kích hoạt các nhiệm vụ điều hành tối cao
@@ -34,6 +35,9 @@ func electionLoop() {
 				lockFile = nil
 			}
 			leaderMutex.Unlock()
+		}
+		if isTerminated.Load() {
+			break
 		}
 		// Nếu là Worker: Thử lại sau mỗi 5 giây để sẵn sàng kế nhiệm nếu Quản Gia Trưởng bị tắt
 		time.Sleep(5 * time.Second)
@@ -86,6 +90,7 @@ func IsLeader() bool {
 // 2. Không xóa thô bạo file JSON/Lock dùng chung để tránh race condition khi Passwall2 restart dịch vụ.
 //    (Hệ thống Web LuCI đã có cơ chế Liveness Threshold 18s tự động reset UI khi tiến trình dừng).
 func CleanupOnShutdown() {
+	isTerminated.Store(true)
 	leaderMutex.Lock()
 	defer leaderMutex.Unlock()
 
