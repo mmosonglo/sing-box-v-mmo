@@ -21,6 +21,8 @@ func tryAcquireLeadership() bool {
 		return false
 	}
 
+	leaderMutex.Lock()
 	lockFile = f
+	leaderMutex.Unlock()
 	return true
 }

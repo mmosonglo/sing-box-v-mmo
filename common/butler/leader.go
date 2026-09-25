@@ -2,13 +2,15 @@ package butler
 
 import (
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 )
 
 var (
-	isLeader atomic.Bool
-	lockFile *os.File
+	isLeader    atomic.Bool
+	leaderMutex sync.Mutex
+	lockFile    *os.File
 )
 
 const LockFilePath = "/tmp/sing-box-butler.lock"
@@ -26,10 +28,12 @@ func electionLoop() {
 			runLeaderTasks()
 			// Nếu thoát khỏi runLeaderTasks (ví dụ bị mất lock hoặc file descriptor đóng)
 			isLeader.Store(false)
+			leaderMutex.Lock()
 			if lockFile != nil {
 				_ = lockFile.Close()
 				lockFile = nil
 			}
+			leaderMutex.Unlock()
 		}
 		// Nếu là Worker: Thử lại sau mỗi 5 giây để sẵn sàng kế nhiệm nếu Quản Gia Trưởng bị tắt
 		time.Sleep(5 * time.Second)
@@ -75,4 +79,21 @@ func countActiveDevices(threshold time.Duration) int32 {
 // IsLeader trả về true nếu tiến trình hiện tại là Quản Gia Trưởng
 func IsLeader() bool {
 	return isLeader.Load()
+}
+
+// CleanupOnShutdown: Dọn dẹp an toàn khi tiến trình thoát
+// 1. Nhả khóa flock và đóng FD an toàn qua leaderMutex (loại trừ data race 100%).
+// 2. Không xóa thô bạo file JSON/Lock dùng chung để tránh race condition khi Passwall2 restart dịch vụ.
+//    (Hệ thống Web LuCI đã có cơ chế Liveness Threshold 18s tự động reset UI khi tiến trình dừng).
+func CleanupOnShutdown() {
+	leaderMutex.Lock()
+	defer leaderMutex.Unlock()
+
+	if isLeader.Load() {
+		isLeader.Store(false)
+		if lockFile != nil {
+			_ = lockFile.Close()
+			lockFile = nil
+		}
+	}
 }

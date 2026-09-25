@@ -19,8 +19,9 @@ const (
 	StartupLockPath       = "/tmp/sing-box-startup.lock"
 	EmergencyReserveRAMKB = 8 * 1024       // Lằn ranh đỏ: Luôn giữ 8MB RAM cho Linux Kernel SoftIRQ & OS
 	DefaultEstimatedRAMKB = 5 * 1024       // Ước tính ban đầu 5MB RAM cho 1 tiến trình mới
-	MaxQueueWaitDuration  = 10 * time.Second // Hàng chờ "Ok đợi chút" tối đa 10 giây
-	QueueRetryInterval    = 500 * time.Millisecond
+	MaxQueueWaitDuration    = 10 * time.Second // Hàng chờ "Ok đợi chút" tối đa 10 giây
+	QueueRetryInterval      = 500 * time.Millisecond
+	StartupCooldownInterval = 1 * time.Second  // Giãn cách nhịp thở 1 giây cho Linux nén ZRAM & cập nhật meminfo chuẩn xác
 )
 
 // AcquireStartupGate: Trạm kiểm soát cất cánh tuần tự & Dự báo an toàn RAM
@@ -42,12 +43,12 @@ func AcquireStartupGate(ctx context.Context) (func(), error) {
 	}
 
 	// 2. Tự khảo sát RAM các anh em sing-box đang chạy để tính mức RAM trung bình
-	estimatedCostKB, runningCount := surveySingBoxMemoryCost()
+	estimatedCostKB, _ := surveySingBoxMemoryCost()
 
 	// 3. Kiểm tra và Dự báo RAM khả dụng (có hàng chờ "Ok đợi chút" nếu RAM sát nút)
 	startTime := time.Now()
 	for {
-		availKB, _ := readMemAndSwapKB()
+		availKB, _, _, _ := readMemAndSwapKB()
 		if availKB <= 0 {
 			// Không đọc được /proc/meminfo -> cho phép chạy an toàn
 			break
@@ -56,19 +57,14 @@ func AcquireStartupGate(ctx context.Context) (func(), error) {
 		predictedRemainingKB := availKB - estimatedCostKB
 		if predictedRemainingKB >= EmergencyReserveRAMKB {
 			// Đủ RAM an toàn -> Cấp phép cất cánh!
-			logToSyslog(fmt.Sprintf("[Tiếp nhận] Cấp phép khởi động tiến trình #%d (Dự toán: %dMB, RAM khả dụng: %dMB)",
-				runningCount+1, estimatedCostKB/1024, availKB/1024))
 			break
 		}
 
 		// Thiếu RAM: Kích hoạt hàng chờ "Ok đợi chút"
-		logToSyslog(fmt.Sprintf("[Hàng chờ] RAM hẹp (%dMB < %dMB dự toán + 8MB đệm). Đang giữ nhịp đợi ZRAM/GC nhả RAM...",
-			availKB/1024, estimatedCostKB/1024))
-
 		// Kiểm tra thời gian hết hạn hàng chờ
 		if time.Since(startTime) >= MaxQueueWaitDuration {
 			// Đã đợi 10s mà RAM vẫn cạn kiệt -> Từ chối để bảo vệ Router không bị OOM Killer sập máy
-			logToSyslog(fmt.Sprintf("[Hàng chờ] Hết thời gian chờ (10s), RAM vẫn cạn (%dMB). Tạm hoãn tiến trình để bảo vệ Router!", availKB/1024))
+			RecordRejection("Hết RAM khởi động", fmt.Sprintf("RAM khả dụng chỉ còn %dMB, cần %dMB", availKB/1024, estimatedCostKB/1024))
 			_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 			f.Close()
 			return func() {}, errors.New("insufficient memory: startup aborted to prevent router OOM crash")
@@ -98,6 +94,9 @@ func AcquireStartupGate(ctx context.Context) (func(), error) {
 
 		// Cho phép bộ đếm instance được làm mới
 		cachedInstanceCount.Store(0)
+
+		// Giãn cách nhịp thở 1 giây: Cho Linux Kernel đẩy heap vào ZRAM và cập nhật meminfo chuẩn xác
+		time.Sleep(StartupCooldownInterval)
 
 		// Mở khóa để tiến trình kế tiếp trong hàng chờ được cất cánh
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)

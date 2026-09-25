@@ -208,6 +208,7 @@ func run() error {
 			err = instance.Close()
 			closed()
 			if osSignal != syscall.SIGHUP {
+				butler.CleanupOnShutdown()
 				if err != nil {
 					log.Error(E.Cause(err, "sing-box did not closed properly"))
 				}

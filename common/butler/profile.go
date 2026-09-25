@@ -2,7 +2,6 @@ package butler
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"strconv"
 	"sync/atomic"
@@ -256,14 +255,8 @@ func updateDynamicLimits(activeCount int32) {
 	// 1. Quản gia check RAM thực tế trước:
 	availKB := lastMemAvailKB.Load()
 	if availKB <= 0 {
-		avail, swap := readMemAndSwapKB()
-		if avail > 0 {
-			lastMemAvailKB.Store(avail)
-			availKB = avail
-		}
-		if swap > 0 {
-			lastSwapFreeKB.Store(swap)
-		}
+		checkMemoryAndZramHarmony()
+		availKB = lastMemAvailKB.Load()
 	}
 
 	// Ngân sách an toàn mặc định theo hồ sơ phần cứng (15% Safety Headroom)
@@ -300,10 +293,7 @@ func updateDynamicLimits(activeCount int32) {
 		calculatedLimit = currentProfile.MaxClientCap
 	}
 
-	oldLimit := dynamicHardLimit.Swap(calculatedLimit)
-	if IsLeader() && (oldLimit != calculatedLimit || lastLoggedInstCount.Swap(instCount) != instCount) {
-		logToSyslog(fmt.Sprintf("kết quả chia trung bình v-mmo %d (tiến trình: %d, RAM: %dMB)", calculatedLimit, instCount, availKB/1024))
-	}
+	dynamicHardLimit.Swap(calculatedLimit)
 }
 
 // updateDynamicGuaranteedMin: Tính toán số kết nối tối thiểu bảo đảm (khóa sàn ở 250 khi đông máy)
@@ -328,14 +318,8 @@ func updateDynamicGuaranteedMin(activeCount int32) {
 	// Khi ít máy (ví dụ 5-10 máy) và RAM rảnh: Sàn bảo đảm co giãn theo RAM
 	availKB := lastMemAvailKB.Load()
 	if availKB <= 0 {
-		avail, swap := readMemAndSwapKB()
-		if avail > 0 {
-			lastMemAvailKB.Store(avail)
-			availKB = avail
-		}
-		if swap > 0 {
-			lastSwapFreeKB.Store(swap)
-		}
+		checkMemoryAndZramHarmony()
+		availKB = lastMemAvailKB.Load()
 	}
 
 	if availKB <= 0 {

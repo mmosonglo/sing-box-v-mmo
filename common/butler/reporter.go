@@ -24,16 +24,19 @@ type ButlerStatus struct {
 	UptimeSeconds          int64          `json:"uptime_seconds"`
 	TotalActiveConns       int64          `json:"total_active_conns"`
 	ActiveClients          int            `json:"active_clients"`
-	RouterMemAvailMB       int64          `json:"router_mem_avail_mb"`
-	ZramSwapFreeMB         int64          `json:"zram_swap_free_mb"`
-	KernelConntrackCount   int64          `json:"kernel_conntrack_count"`
+	RouterMemAvailMB       int64             `json:"router_mem_avail_mb"`
+	TotalRAMMB             int64             `json:"total_ram_mb"`
+	ZramSwapFreeMB         int64             `json:"zram_swap_free_mb"`
+	TotalSwapMB            int64             `json:"total_swap_mb"`
+	KernelConntrackCount   int64             `json:"kernel_conntrack_count"`
 	KernelConntrackMax     int64          `json:"kernel_conntrack_max"`
 	MemoryState            string         `json:"memory_state"`
 	EmergencyTrims         uint64         `json:"emergency_trims"`
-	TopClients             []ClientReport `json:"top_clients"`
-	CPUUsagePercent        int            `json:"cpu_usage_percent"`
-	CPULoadAvg             string         `json:"cpu_load_avg"`
-	CPUTempC               int            `json:"cpu_temp_c,omitempty"`
+	TopClients             []ClientReport    `json:"top_clients"`
+	CPUUsagePercent        int               `json:"cpu_usage_percent"`
+	CPULoadAvg             string            `json:"cpu_load_avg"`
+	CPUTempC               int               `json:"cpu_temp_c,omitempty"`
+	Rejections             []RejectionRecord `json:"rejections,omitempty"`
 }
 
 var startTime = time.Now()
@@ -102,7 +105,9 @@ func writeStatusFile() {
 		TotalActiveConns:      totalActiveConns.Load(),
 		ActiveClients:         len(clients),
 		RouterMemAvailMB:      lastMemAvailKB.Load() / 1024,
+		TotalRAMMB:            lastMemTotalKB.Load() / 1024,
 		ZramSwapFreeMB:        lastSwapFreeKB.Load() / 1024,
+		TotalSwapMB:           lastSwapTotalKB.Load() / 1024,
 		KernelConntrackCount:  kernelConntrackCount.Load(),
 		KernelConntrackMax:    kernelConntrackMax.Load(),
 		MemoryState:           memState,
@@ -111,6 +116,7 @@ func writeStatusFile() {
 		CPUUsagePercent:       cpuUsage,
 		CPULoadAvg:            loadAvg,
 		CPUTempC:              cpuTemp,
+		Rejections:            GetRejections(),
 	}
 
 	data, err := json.MarshalIndent(status, "", "  ")

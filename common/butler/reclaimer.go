@@ -26,10 +26,12 @@ const (
 var (
 	isTrafficActive atomic.Bool
 	isDeepCleaned   atomic.Bool
-	emergencyCount  atomic.Uint64
-	lastMemAvailKB  atomic.Int64
-	lastSwapFreeKB  atomic.Int64
-	lastEmergencyAt atomic.Int64 // Unix timestamp nano của lần dọn khẩn cấp cuối
+	emergencyCount   atomic.Uint64
+	lastMemAvailKB   atomic.Int64
+	lastMemTotalKB   atomic.Int64
+	lastSwapFreeKB   atomic.Int64
+	lastSwapTotalKB  atomic.Int64
+	lastEmergencyAt  atomic.Int64 // Unix timestamp nano của lần dọn khẩn cấp cuối
 )
 
 func onTrafficActive() {
@@ -52,6 +54,9 @@ func startReclaimer() {
 	}
 	debug.SetGCPercent(WarmGCPercent)
 	debug.SetMemoryLimit(limit)
+
+	// Đọc ngay lập tức thông số RAM/Swap khi khởi động để cung cấp cho reporter
+	checkMemoryAndZramHarmony()
 
 	// Dọn rác khởi tạo 1 lần duy nhất sau 3 giây nạp cấu hình (không dồn dập)
 	time.AfterFunc(3*time.Second, func() {
@@ -131,12 +136,18 @@ func handleIdleTransitions() {
 // checkMemoryAndZramHarmony: Phối hợp nhịp nhàng giữa RAM vật lý và ZRAM Swap 238MB
 // Không dọn dẹp thô bạo làm phá vỡ cơ chế nén tự nhiên của ZRAM
 func checkMemoryAndZramHarmony() {
-	availKB, swapFreeKB := readMemAndSwapKB()
+	availKB, swapFreeKB, totalRAMKB, totalSwapKB := readMemAndSwapKB()
 	if availKB > 0 {
 		lastMemAvailKB.Store(availKB)
 	}
 	if swapFreeKB >= 0 {
 		lastSwapFreeKB.Store(swapFreeKB)
+	}
+	if totalRAMKB > 0 {
+		lastMemTotalKB.Store(totalRAMKB)
+	}
+	if totalSwapKB >= 0 {
+		lastSwapTotalKB.Store(totalSwapKB)
 	}
 
 	// NGUYÊN TẮC HÀI HÒA VỚI ZRAM:
@@ -175,9 +186,11 @@ func checkMemoryAndZramHarmony() {
 }
 
 // readMemAndSwapKB: Đọc cả MemAvailable và SwapFree từ /proc/meminfo một lần duy nhất
-func readMemAndSwapKB() (memAvailKB int64, swapFreeKB int64) {
+func readMemAndSwapKB() (memAvailKB, swapFreeKB, memTotalKB, swapTotalKB int64) {
 	memAvailKB = -1
 	swapFreeKB = -1
+	memTotalKB = -1
+	swapTotalKB = -1
 
 	data, err := os.ReadFile("/proc/meminfo")
 	if err != nil {
@@ -188,11 +201,12 @@ func readMemAndSwapKB() (memAvailKB int64, swapFreeKB int64) {
 	for _, line := range lines {
 		if bytes.HasPrefix(line, []byte("MemAvailable:")) {
 			memAvailKB = parseKB(line)
+		} else if bytes.HasPrefix(line, []byte("MemTotal:")) {
+			memTotalKB = parseKB(line)
 		} else if bytes.HasPrefix(line, []byte("SwapFree:")) {
 			swapFreeKB = parseKB(line)
-		}
-		if memAvailKB > 0 && swapFreeKB > 0 {
-			break
+		} else if bytes.HasPrefix(line, []byte("SwapTotal:")) {
+			swapTotalKB = parseKB(line)
 		}
 	}
 	return
