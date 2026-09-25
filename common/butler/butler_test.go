@@ -290,10 +290,10 @@ func TestDynamicLimitScaling(t *testing.T) {
 		t.Fatalf("expected 255 limit for 20 clients, got %d", limit)
 	}
 
-	// 500 clients: 5100 / 500 = 10 -> Nhỏ hơn 200 là DỪNG, khóa sàn ở 200 (AbsoluteMinFloor) theo chỉ đạo quản gia
+	// 500 clients: 5100 / 500 = 10 -> Nhỏ hơn 250 là DỪNG, khóa sàn ở 250 (AbsoluteMinFloor) theo chỉ đạo quản gia
 	updateDynamicLimits(500)
-	if limit := GetDynamicHardLimit(); limit != 200 {
-		t.Fatalf("expected 200 (AbsoluteMinFloor) for 500 clients, got %d", limit)
+	if limit := GetDynamicHardLimit(); limit != 250 {
+		t.Fatalf("expected 250 (AbsoluteMinFloor) for 500 clients, got %d", limit)
 	}
 }
 
@@ -318,7 +318,7 @@ func TestDynamicGuaranteedMinCalculation(t *testing.T) {
 		TotalRAMMB:          240,
 		SafeConntrackBudget: 6000,
 		MaxClientCap:        1200,
-		GuaranteedFloor:     200,
+		GuaranteedFloor:     250,
 		IdleMemoryLimit:     20 * 1024 * 1024,
 	}
 	dynamicHardLimit.Store(1200)
@@ -326,32 +326,32 @@ func TestDynamicGuaranteedMinCalculation(t *testing.T) {
 	// 1. Khi router dư RAM (ví dụ MemAvailable = 80MB = 81920KB):
 	// Safe budget = 81920 - 15360 = 66560 KB
 	// ramCapacity = 66560 / 16 = 4160 conns
-	// 20 máy -> 4160 / 20 = 208 conns/máy (chia đều đạt > 200)
+	// 20 máy -> 4160 / 20 = 208 conns/máy -> Nhỏ hơn 250 là DỪNG, khóa sàn ở 250
 	lastMemAvailKB.Store(80 * 1024)
 	updateDynamicGuaranteedMin(20)
 	gMin := GetEffectiveGuaranteedMin()
-	if gMin < 200 || gMin > 250 {
-		t.Fatalf("expected guaranteed min around 208 conns for 80MB RAM, got %d", gMin)
+	if gMin != 250 {
+		t.Fatalf("expected guaranteed min clamped to 250 floor, got %d", gMin)
 	}
 
 	// 2. Khi router giảm RAM (MemAvailable = 25MB = 25600KB):
 	// Safe budget = 25600 - 15360 = 10240 KB
 	// ramCapacity = 10240 / 16 = 640 conns
-	// 20 máy -> 640 / 20 = 32 conns/máy -> Nhỏ hơn 200 là DỪNG, khóa sàn ở 200!
+	// 20 máy -> 640 / 20 = 32 conns/máy -> Nhỏ hơn 250 là DỪNG, khóa sàn ở 250!
 	lastMemAvailKB.Store(25 * 1024)
 	updateDynamicGuaranteedMin(20)
 	gMinLow := GetEffectiveGuaranteedMin()
-	if gMinLow != 200 {
-		t.Fatalf("expected clamped floor 200 conns for low RAM (32 conns calculated), got %d", gMinLow)
+	if gMinLow != 250 {
+		t.Fatalf("expected clamped floor 250 conns for low RAM (32 conns calculated), got %d", gMinLow)
 	}
 
 	// 3. Khi router cạn kiệt RAM (MemAvailable = 10MB < 15MB reserve):
-	// Kết quả chia < 200 -> Dừng chia, giữ sàn tối thiểu 200
+	// Kết quả chia < 250 -> Dừng chia, giữ sàn tối thiểu 250
 	lastMemAvailKB.Store(10 * 1024)
 	updateDynamicGuaranteedMin(20)
 	gMinCrit := GetEffectiveGuaranteedMin()
-	if gMinCrit != 200 {
-		t.Fatalf("expected clamped floor 200 conns for critical RAM, got %d", gMinCrit)
+	if gMinCrit != 250 {
+		t.Fatalf("expected clamped floor 250 conns for critical RAM, got %d", gMinCrit)
 	}
 }
 

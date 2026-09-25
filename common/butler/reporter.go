@@ -31,6 +31,9 @@ type ButlerStatus struct {
 	MemoryState            string         `json:"memory_state"`
 	EmergencyTrims         uint64         `json:"emergency_trims"`
 	TopClients             []ClientReport `json:"top_clients"`
+	CPUUsagePercent        int            `json:"cpu_usage_percent"`
+	CPULoadAvg             string         `json:"cpu_load_avg"`
+	CPUTempC               int            `json:"cpu_temp_c,omitempty"`
 }
 
 var startTime = time.Now()
@@ -86,6 +89,8 @@ func writeStatusFile() {
 		}
 	}
 
+	cpuUsage, loadAvg, cpuTemp := readCPUStats()
+
 	status := ButlerStatus{
 		HardwareProfile:       currentProfile.Name,
 		DynamicLimitPerDevice: GetEffectiveHardLimit(),
@@ -103,6 +108,9 @@ func writeStatusFile() {
 		MemoryState:           memState,
 		EmergencyTrims:        emergencyCount.Load(),
 		TopClients:            topClients,
+		CPUUsagePercent:       cpuUsage,
+		CPULoadAvg:            loadAvg,
+		CPUTempC:              cpuTemp,
 	}
 
 	data, err := json.MarshalIndent(status, "", "  ")

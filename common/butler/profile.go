@@ -236,7 +236,7 @@ func scanProcSingBox() int32 {
 
 // updateDynamicLimits: Quản gia check RAM thực tế trước để có định mức thực tế,
 // sau đó chia đều cho các tiến trình sing-box đang chạy.
-// Nếu kết quả chia nhỏ hơn 200 thì DỪNG (khóa sàn ở 200 kết nối/máy để bảo đảm MMO bot chạy ổn định).
+// Nếu kết quả chia nhỏ hơn 250 thì DỪNG (khóa sàn ở 250 kết nối/máy để bảo đảm MMO bot chạy ổn định).
 func updateDynamicLimits(activeCount int32) {
 	instCount := countSingBoxInstances()
 	if instCount < activeCount {
@@ -289,8 +289,8 @@ func updateDynamicLimits(activeCount int32) {
 	// 2. Chia đều định mức thực tế cho số tiến trình sing-box đang chạy:
 	calculatedLimit := int32(safeBudget / int64(instCount))
 
-	// 3. Quy tắc cốt lõi: Nếu nhỏ hơn 200 là DỪNG (Khóa sàn ở 200 kết nối/máy)
-	const AbsoluteMinFloor int32 = 200
+	// 3. Quy tắc cốt lõi: Nếu nhỏ hơn 250 là DỪNG (Khóa sàn ở 250 kết nối/máy)
+	const AbsoluteMinFloor int32 = 250
 	if calculatedLimit < AbsoluteMinFloor {
 		calculatedLimit = AbsoluteMinFloor
 	}
@@ -306,7 +306,7 @@ func updateDynamicLimits(activeCount int32) {
 	}
 }
 
-// updateDynamicGuaranteedMin: Tính toán số kết nối tối thiểu bảo đảm (khóa sàn ở 200 khi đông máy)
+// updateDynamicGuaranteedMin: Tính toán số kết nối tối thiểu bảo đảm (khóa sàn ở 250 khi đông máy)
 func updateDynamicGuaranteedMin(activeCount int32) {
 	if activeCount <= 0 {
 		activeCount = 1
@@ -318,7 +318,7 @@ func updateDynamicGuaranteedMin(activeCount int32) {
 		return
 	}
 
-	const AbsoluteMinFloor int32 = 200
+	const AbsoluteMinFloor int32 = 250
 	currHardLimit := dynamicHardLimit.Load()
 	if currHardLimit <= AbsoluteMinFloor {
 		dynamicGuaranteedMin.Store(AbsoluteMinFloor)
