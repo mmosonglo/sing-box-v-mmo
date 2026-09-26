@@ -17,11 +17,10 @@ import (
 
 const (
 	StartupLockPath       = "/tmp/sing-box-startup.lock"
-	EmergencyReserveRAMKB = 8 * 1024       // Lằn ranh đỏ: Luôn giữ 8MB RAM cho Linux Kernel SoftIRQ & OS
-	DefaultEstimatedRAMKB = 5 * 1024       // Ước tính ban đầu 5MB RAM cho 1 tiến trình mới
-	MaxQueueWaitDuration    = 10 * time.Second // Hàng chờ "Ok đợi chút" tối đa 10 giây
-	QueueRetryInterval      = 500 * time.Millisecond
-	StartupCooldownInterval = 1 * time.Second  // Giãn cách nhịp thở 1 giây cho Linux nén ZRAM & cập nhật meminfo chuẩn xác
+	EmergencyReserveRAMKB = 8 * 1024          // Lằn ranh đỏ: Luôn giữ 8MB RAM cho Linux Kernel SoftIRQ & OS
+	DefaultEstimatedRAMKB = 5 * 1024          // Ước tính ban đầu 5MB RAM cho 1 tiến trình mới
+	MaxQueueWaitDuration  = 120 * time.Second // Hàng chờ cất cánh tuần tự tối đa 120 giây (đảm bảo 15-20 node không bị timeout oan)
+	QueueRetryInterval    = 500 * time.Millisecond
 )
 
 // AcquireStartupGate: Trạm kiểm soát cất cánh tuần tự & Dự báo an toàn RAM
@@ -103,8 +102,29 @@ func AcquireStartupGate(ctx context.Context) (func(), error) {
 		// Cho phép bộ đếm instance được làm mới
 		cachedInstanceCount.Store(0)
 
-		// Giãn cách nhịp thở 1 giây: Cho Linux Kernel đẩy heap vào ZRAM và cập nhật meminfo chuẩn xác
-		time.Sleep(StartupCooldownInterval)
+		// Giãn cách nhịp thở thông minh (Smart Adaptive Cooldown):
+		// - Còn nhiều RAM (>60MB) & ZRAM thoải mái: Lướt nhanh (100ms) để cất cánh tức thì.
+		// - RAM trung bình (30MB - 60MB): Giãn nhẹ (500ms).
+		// - RAM bắt đầu eo hẹp (<30MB) hoặc ZRAM thấp: Delay (2s - 4s) cho ZRAM nén các trang tĩnh vào swap trước khi cho node sau vào.
+		curAvailKB, curSwapFreeKB, _, _ := readMemAndSwapKB()
+		var cooldown time.Duration
+		switch {
+		case curAvailKB <= 0:
+			cooldown = 200 * time.Millisecond
+		case curAvailKB >= 60*1024 && curSwapFreeKB >= 100*1024:
+			// Dồi dào RAM: Cất cánh siêu tốc
+			cooldown = 100 * time.Millisecond
+		case curAvailKB >= 30*1024:
+			// RAM an toàn: Nhịp thở nhẹ nhàng
+			cooldown = 500 * time.Millisecond
+		case curAvailKB >= 15*1024:
+			// RAM bắt đầu căng: Đợi 2 giây để Linux nén ZRAM & cập nhật meminfo
+			cooldown = 2 * time.Second
+		default:
+			// RAM sát lằn ranh đỏ (<15MB): Đợi tối đa 4 giây để bảo vệ router
+			cooldown = 4 * time.Second
+		}
+		time.Sleep(cooldown)
 
 		// Mở khóa để tiến trình kế tiếp trong hàng chờ được cất cánh
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
