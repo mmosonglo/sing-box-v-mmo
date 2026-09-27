@@ -5,7 +5,6 @@ package butler
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -17,22 +16,29 @@ import (
 
 const (
 	StartupLockPath       = "/tmp/sing-box-startup.lock"
-	EmergencyReserveRAMKB = 8 * 1024          // Lằn ranh đỏ: Luôn giữ 8MB RAM cho Linux Kernel SoftIRQ & OS
-	DefaultEstimatedRAMKB = 5 * 1024          // Ước tính ban đầu 5MB RAM cho 1 tiến trình mới
-	MaxQueueWaitDuration  = 120 * time.Second // Hàng chờ cất cánh tuần tự tối đa 120 giây (đảm bảo 15-20 node không bị timeout oan)
-	QueueRetryInterval    = 500 * time.Millisecond
+	EmergencyReserveRAMKB = 8 * 1024                // Lằn ranh đỏ: Luôn giữ 8MB RAM cho Linux Kernel SoftIRQ & OS
+	DefaultEstimatedRAMKB = 5 * 1024                // Ước tính ban đầu 5MB RAM cho 1 tiến trình mới
+	InitialWaitDuration   = 10 * time.Second        // Chờ nhanh 10 giây ban đầu: nếu RAM phục hồi kịp thì cất cánh ngay
+	InitialRetryInterval  = 500 * time.Millisecond  // Trong 10s đầu: kiểm tra lại mỗi 500ms
+	StandbySleepInterval  = 2000 * time.Millisecond // Sau 10s: đưa vào hàng đợi ngủ đông và kiểm tra mỗi 2s
 )
 
-// AcquireStartupGate: Trạm kiểm soát cất cánh tuần tự & Dự báo an toàn RAM
-// Đảm bảo:
-// 1. Chỉ 1 tiến trình khởi tạo cấu hình tại một thời điểm (chống cú sốc đầy RAM khi Passwall2 gửi 20 node cùng lúc).
-// 2. Tự đo lường mức RAM trung bình các tiến trình sing-box khác đang dùng để làm căn cứ dự báo.
-// 3. Nếu RAM an toàn (>= 8MB đệm) -> Cấp phép ngay. Nếu thiếu RAM -> Đưa vào hàng chờ "Ok đợi chút" tối đa 10s.
+// AcquireStartupGate: Trạm kiểm soát cất cánh tuần tự & Dự báo an toàn RAM (v-mmo Standby & Smart Adaptive Controller)
+// 1. Kiểm tra RAM: Nếu thiếu RAM, chờ thêm 10s (mỗi 500ms thử lại).
+// 2. Nếu sau 10s vẫn chưa lên được: Đưa vào hàng chờ ngủ đông (Standby Queue) và kiểm tra định kỳ mỗi 2s.
+// 3. Khi router đủ RAM an toàn -> Tự động thức tỉnh, rời hàng chờ và nạp cấu hình cất cánh!
+// 4. Nhịp cất cánh thông minh (Smart Adaptive Cooldown):
+//    - RAM dồi dào (>60MB) & ZRAM rảnh: 100ms
+//    - RAM an toàn (30-60MB): 500ms
+//    - RAM căng (15-30MB): 2s
+//    - RAM sát nút (<15MB): 4s
 func AcquireStartupGate(ctx context.Context) (func(), error) {
 	f, err := os.OpenFile(StartupLockPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return func() {}, nil
 	}
+
+	pid := os.Getpid()
 
 	// 1. Xếp hàng tuần tự bằng khóa POSIX flock độc quyền
 	// Các tiến trình vào sau sẽ ngủ nhẹ ở tầng OS (CPU 0%) đợi đến lượt mình
@@ -44,8 +50,9 @@ func AcquireStartupGate(ctx context.Context) (func(), error) {
 	// 2. Tự khảo sát RAM các anh em sing-box đang chạy để tính mức RAM trung bình
 	estimatedCostKB, _ := surveySingBoxMemoryCost()
 
-	// 3. Kiểm tra và Dự báo RAM khả dụng (có hàng chờ "Ok đợi chút" nếu RAM sát nút)
+	// 3. Kiểm tra và Dự báo RAM khả dụng
 	startTime := time.Now()
+	inStandby := false
 	for {
 		availKB, _, _, _ := readMemAndSwapKB()
 		if availKB <= 0 {
@@ -55,45 +62,58 @@ func AcquireStartupGate(ctx context.Context) (func(), error) {
 
 		predictedRemainingKB := availKB - estimatedCostKB
 		if predictedRemainingKB >= EmergencyReserveRAMKB {
-			// Đủ RAM an toàn -> Cấp phép cất cánh!
+			// Đủ RAM an toàn -> Nếu trước đó đang trong hàng đợi thì báo thức tỉnh
+			if inStandby {
+				RecordStandbyState(pid, "", "waking", "Đủ RAM, tiến trình đang thức tỉnh và nạp cấu hình...")
+			}
 			break
 		}
 
-		// Thiếu RAM: Kích hoạt hàng chờ "Ok đợi chút"
-		// Kiểm tra thời gian hết hạn hàng chờ
-		if time.Since(startTime) >= MaxQueueWaitDuration {
-			// Đã đợi 10s mà RAM vẫn cạn kiệt -> Từ chối để bảo vệ Router không bị OOM Killer sập máy
-			RecordRejection("Hết RAM khởi động", fmt.Sprintf("RAM khả dụng chỉ còn %dMB, cần %dMB", availKB/1024, estimatedCostKB/1024))
-			_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-			f.Close()
-			return func() {}, errors.New("insufficient memory: startup aborted to prevent router OOM crash")
+		// Thiếu RAM:
+		// Trong 10 giây đầu: chờ nhanh nhường CPU, chưa vội đưa vào bảng hàng đợi ngủ đông
+		// Quá 10 giây: chính thức đưa vào hàng đợi ngủ đông (Standby Queue)
+		sleepDuration := InitialRetryInterval
+		if time.Since(startTime) >= InitialWaitDuration {
+			inStandby = true
+			detailMsg := fmt.Sprintf("RAM khả dụng còn %dMB, cần %dMB (+8MB đệm). Đang ngủ chờ RAM...", availKB/1024, estimatedCostKB/1024)
+			RecordStandbyState(pid, "", "waiting", detailMsg)
+			sleepDuration = StandbySleepInterval
 		}
 
-		// KHỬ HEAD-OF-LINE BLOCKING: Nhả khóa trước khi ngủ để các tiến trình khác không bị nghẽn
+		// KHỬ HEAD-OF-LINE BLOCKING: Nhả khóa trước khi ngủ để các tiến trình khác hoặc OS không bị nghẽn
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+
+		// Thu hồi Heap tối đa về OS trước khi ngủ để tiết kiệm từng byte RAM
+		runtime.GC()
+		runtimeDebug.FreeOSMemory()
 
 		select {
 		case <-ctx.Done():
+			RemoveStandbyItem(pid)
 			f.Close()
 			return func() {}, ctx.Err()
-		case <-time.After(QueueRetryInterval):
-			// Đợi 500ms để Linux đẩy bớt trang tĩnh vào ZRAM hoặc các tiến trình khác dọn dẹp
+		case <-time.After(sleepDuration):
+			// Thức dậy kiểm tra lại RAM
 		}
 
-		// Thử lấy lại khóa độc quyền sau khi tỉnh giấc
+		// Lấy lại khóa độc quyền để kiểm tra lại
 		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+			RemoveStandbyItem(pid)
 			f.Close()
 			return func() {}, nil
 		}
 	}
 
-	// 4. Trả về hàm unlockGate để nhả trạm kiểm soát sau khi nạp xong
+	// 4. Trả về hàm unlockGate để dọn rác và giãn cách thông minh trước khi nhả khóa cho node kế tiếp
 	unlocked := false
 	unlockGate := func() {
 		if unlocked {
 			return
 		}
 		unlocked = true
+
+		// Đã cất cánh thành công -> gỡ khỏi hàng chờ thức tỉnh
+		RemoveStandbyItem(pid)
 
 		// Thu dọn ngay rác bộ nhớ phát sinh trong quá trình nạp JSON / biên dịch routing
 		runtime.GC()

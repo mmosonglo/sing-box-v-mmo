@@ -14,12 +14,13 @@ const (
 
 // ClientSlot đại diện cho 1 thiết bị LAN (được căn chỉnh đúng 64 bytes để chống False Sharing giữa các CPU Core)
 type ClientSlot struct {
-	TotalConns  atomic.Uint64 // 8 bytes: Offset 0..7 (Căn chỉnh 8-byte tự nhiên trên 32-bit & 64-bit)
-	LastActive  atomic.Int64  // 8 bytes: Offset 8..15
-	FirstSeen   atomic.Int64  // 8 bytes: Offset 16..23 (Thời điểm máy bắt đầu kết nối vào mạng)
-	ActiveConns atomic.Int32  // 4 bytes: Offset 24..27
-	IsActive    atomic.Bool   // 4 bytes: Offset 28..31 (atomic.Bool trong Go chứa v uint32)
-	_pad        [32]byte      // 32 bytes: Offset 32..63 -> ĐÚNG 64 BYTES CHUẨN CACHE LINE (8+8+8+4+4+32 = 64B)
+	TotalConns     atomic.Uint64 // 8 bytes: Offset 0..7 (Căn chỉnh 8-byte tự nhiên trên 32-bit & 64-bit)
+	LastActive     atomic.Int64  // 8 bytes: Offset 8..15
+	FirstSeen      atomic.Int64  // 8 bytes: Offset 16..23 (Thời điểm máy bắt đầu kết nối vào mạng)
+	LastRejectNano atomic.Int64  // 8 bytes: Offset 24..31 (Giới hạn tần suất ghi log từ chối, chống spam)
+	ActiveConns    atomic.Int32  // 4 bytes: Offset 32..35
+	IsActive       atomic.Bool   // 4 bytes: Offset 36..39 (atomic.Bool trong Go chứa v uint32)
+	_pad           [24]byte      // 24 bytes: Offset 40..63 -> ĐÚNG 64 BYTES CHUẨN CACHE LINE (8*4 + 4*2 + 24 = 64B)
 }
 
 // clientSlots: Bảng tra cứu trực tiếp 1024 slot cố định (Zero Garbage Collection)

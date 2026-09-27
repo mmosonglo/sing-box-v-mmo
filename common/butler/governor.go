@@ -1,6 +1,7 @@
 package butler
 
 import (
+	"fmt"
 	"net/netip"
 	"runtime"
 	"sync/atomic"
@@ -44,6 +45,7 @@ func Acquire(addr netip.Addr) bool {
 
 	// 1. Chốt chặn chống sập Router: Nếu tài nguyên cạn kiệt, tạm dừng thiết bị kết nối sau cùng
 	if IsPausedClient(slot) {
+		recordClientRejectionThrottled(slot, addr, "Tạm dừng thiết bị", "Thiết bị tạm dừng để giải phóng tài nguyên router")
 		return false
 	}
 
@@ -53,6 +55,7 @@ func Acquire(addr netip.Addr) bool {
 		// 2. Chốt chặn bảo vệ Router: Hạn ngạch tự động co giãn theo số máy online thực tế
 		effectiveLimit := GetEffectiveHardLimit()
 		if currClient >= effectiveLimit {
+			recordClientRejectionThrottled(slot, addr, "Vượt hạn ngạch", fmt.Sprintf("Đã chạm trần %d kết nối/thiết bị", effectiveLimit))
 			return false
 		}
 
@@ -63,6 +66,7 @@ func Acquire(addr netip.Addr) bool {
 		effectiveGuaranteedMin := GetEffectiveGuaranteedMin()
 		currTotal := totalActiveConns.Load()
 		if currTotal >= effectiveMaxConns && currClient >= effectiveGuaranteedMin {
+			recordClientRejectionThrottled(slot, addr, "Hết ngân sách kết nối", fmt.Sprintf("Toàn mạng đạt %d/%d kết nối", currTotal, effectiveMaxConns))
 			return false
 		}
 
@@ -124,4 +128,21 @@ func TotalActiveConnections() int64 {
 // ClientActiveConnections trả về số kết nối đang hoạt động của 1 IP
 func ClientActiveConnections(addr netip.Addr) int32 {
 	return getSlot(addr).ActiveConns.Load()
+}
+
+// recordClientRejectionThrottled ghi lại từ chối kết nối có throttle (tối đa 1 lần/10 giây/thiết bị)
+// để tránh spam ring-buffer và I/O khi client gửi hàng loạt SYN packets.
+func recordClientRejectionThrottled(slot *ClientSlot, addr netip.Addr, reason, detail string) {
+	now := time.Now().UnixNano()
+	last := slot.LastRejectNano.Load()
+	if now-last < int64(10*time.Second) {
+		return
+	}
+	if slot.LastRejectNano.CompareAndSwap(last, now) {
+		clientIP := "unknown"
+		if addr.IsValid() {
+			clientIP = addr.String()
+		}
+		RecordRejection(clientIP, reason, detail)
+	}
 }

@@ -1,3 +1,3 @@
-8d15712e45ffbc4c182cdfa1e57ea4a9  sing-box_1.12.25_openwrt_amd64
-1071c48ba89b9799a5ea7fbb446fcc76  sing-box_1.12.25_openwrt_arm64
-73c0bb4ee002f65eee0697395004cf88  sing-box_1.12.25_openwrt_mt7621
+be5035ce9aeaa6168fc9cd2db80b4efb  sing-box_1.12.25_openwrt_amd64
+8a7740b6cbac442bb02de9f238376cd4  sing-box_1.12.25_openwrt_arm64
+977a04dc121b949fbf52a6f4ca12c151  sing-box_1.12.25_openwrt_mt7621

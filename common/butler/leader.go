@@ -91,6 +91,7 @@ func IsLeader() bool {
 //    (Hệ thống Web LuCI đã có cơ chế Liveness Threshold 18s tự động reset UI khi tiến trình dừng).
 func CleanupOnShutdown() {
 	isTerminated.Store(true)
+	RemoveStandbyItem(os.Getpid())
 	leaderMutex.Lock()
 	defer leaderMutex.Unlock()
 

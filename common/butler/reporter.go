@@ -37,6 +37,7 @@ type ButlerStatus struct {
 	CPULoadAvg             string            `json:"cpu_load_avg"`
 	CPUTempC               int               `json:"cpu_temp_c,omitempty"`
 	Rejections             []RejectionRecord `json:"rejections,omitempty"`
+	StandbyQueue           []StandbyItem     `json:"standby_queue,omitempty"`
 }
 
 var startTime = time.Now()
@@ -117,6 +118,7 @@ func writeStatusFile() {
 		CPULoadAvg:            loadAvg,
 		CPUTempC:              cpuTemp,
 		Rejections:            GetRejections(),
+		StandbyQueue:          GetStandbyQueue(),
 	}
 
 	data, err := json.MarshalIndent(status, "", "  ")

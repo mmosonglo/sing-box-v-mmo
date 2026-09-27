@@ -9,31 +9,138 @@ import (
 
 type RejectionRecord struct {
 	Timestamp string `json:"timestamp"`
+	Client    string `json:"client,omitempty"`
 	Reason    string `json:"reason"`
+	Detail    string `json:"detail"`
+}
+
+type StandbyItem struct {
+	Timestamp string `json:"timestamp"`
+	PID       int    `json:"pid"`
+	Node      string `json:"node,omitempty"`
+	State     string `json:"state"` // "waiting" (đang ngủ đợi RAM), "waking" (đang thức tỉnh)
 	Detail    string `json:"detail"`
 }
 
 var (
 	rejectionsLock sync.Mutex
 	rejectionsList []RejectionRecord
+
+	standbyLock sync.Mutex
+	standbyList []StandbyItem
 )
 
 const (
 	maxRejections         = 10
 	rejectionsLogFilePath = "/tmp/sing-box-rejections.log"
 	maxLogFileSize        = 32 * 1024 // 32KB trần an toàn tuyệt đối cho tmpfs RAM
+	standbyQueueFilePath  = "/tmp/sing-box-standby.json"
 )
 
-// RecordRejection lưu vết từ chối do thiếu RAM:
+// RecordStandbyState cập nhật trạng thái của tiến trình trong hàng chờ thức tỉnh
+func RecordStandbyState(pid int, node, state, detail string) {
+	standbyLock.Lock()
+	defer standbyLock.Unlock()
+
+	// Cập nhật in-memory
+	nowStr := time.Now().Format("15:04:05")
+	found := false
+	for i := range standbyList {
+		if standbyList[i].PID == pid {
+			if state == "removed" {
+				standbyList = append(standbyList[:i], standbyList[i+1:]...)
+			} else {
+				standbyList[i].Timestamp = nowStr
+				standbyList[i].State = state
+				standbyList[i].Detail = detail
+			}
+			found = true
+			break
+		}
+	}
+	if !found && state != "removed" {
+		standbyList = append(standbyList, StandbyItem{
+			Timestamp: nowStr,
+			PID:       pid,
+			Node:      node,
+			State:     state,
+			Detail:    detail,
+		})
+	}
+
+	// Đọc và đồng bộ IPC file
+	syncStandbyFile(pid, node, state, detail)
+}
+
+func syncStandbyFile(pid int, node, state, detail string) {
+	var current []StandbyItem
+	if data, err := os.ReadFile(standbyQueueFilePath); err == nil {
+		_ = json.Unmarshal(data, &current)
+	}
+
+	found := false
+	nowStr := time.Now().Format("15:04:05")
+	for i := range current {
+		if current[i].PID == pid {
+			if state == "removed" {
+				current = append(current[:i], current[i+1:]...)
+			} else {
+				current[i].Timestamp = nowStr
+				current[i].State = state
+				current[i].Detail = detail
+			}
+			found = true
+			break
+		}
+	}
+	if !found && state != "removed" {
+		current = append(current, StandbyItem{
+			Timestamp: nowStr,
+			PID:       pid,
+			Node:      node,
+			State:     state,
+			Detail:    detail,
+		})
+	}
+
+	if len(current) == 0 {
+		_ = os.Remove(standbyQueueFilePath)
+	} else {
+		if data, err := json.Marshal(current); err == nil {
+			_ = os.WriteFile(standbyQueueFilePath+".tmp", data, 0o644)
+			_ = os.Rename(standbyQueueFilePath+".tmp", standbyQueueFilePath)
+		}
+	}
+}
+
+// GetStandbyQueue trả về danh sách các node/tiến trình đang ngủ chờ RAM
+func GetStandbyQueue() []StandbyItem {
+	standbyLock.Lock()
+	defer standbyLock.Unlock()
+
+	if data, err := os.ReadFile(standbyQueueFilePath); err == nil {
+		var list []StandbyItem
+		if err := json.Unmarshal(data, &list); err == nil && len(list) > 0 {
+			return list
+		}
+	}
+
+	res := make([]StandbyItem, len(standbyList))
+	copy(res, standbyList)
+	return res
+}
+
+// RecordRejection lưu vết từ chối do thiếu RAM hoặc quá tải thiết bị:
 // 1. Cập nhật in-memory ring-buffer.
 // 2. Tự động xoay vòng (logrotate/truncate) nếu file vượt 32KB để bảo vệ RAM router.
 // 3. Ghi append 1 dòng JSON vào file chia sẻ IPC để Leader đọc và đẩy lên bảng ACL LuCI.
-func RecordRejection(reason, detail string) {
+func RecordRejection(client, reason, detail string) {
 	rejectionsLock.Lock()
 	defer rejectionsLock.Unlock()
 
 	rec := RejectionRecord{
 		Timestamp: time.Now().Format("15:04:05"),
+		Client:    client,
 		Reason:    reason,
 		Detail:    detail,
 	}
@@ -124,3 +231,9 @@ func splitLines(data []byte) [][]byte {
 	}
 	return lines
 }
+
+// RemoveStandbyItem xóa tiến trình khỏi danh sách chờ khi tiến trình thoát hoặc thức dậy thành công
+func RemoveStandbyItem(pid int) {
+	RecordStandbyState(pid, "", "removed", "")
+}
+
