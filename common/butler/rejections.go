@@ -17,6 +17,7 @@ type RejectionRecord struct {
 type StandbyItem struct {
 	Timestamp string `json:"timestamp"`
 	PID       int    `json:"pid"`
+	Client    string `json:"client,omitempty"` // Địa chỉ MAC hoặc IP của máy client từ Passwall2
 	Node      string `json:"node,omitempty"`
 	State     string `json:"state"` // "waiting" (đang ngủ đợi RAM), "waking" (đang thức tỉnh)
 	Detail    string `json:"detail"`
@@ -38,7 +39,7 @@ const (
 )
 
 // RecordStandbyState cập nhật trạng thái của tiến trình trong hàng chờ thức tỉnh
-func RecordStandbyState(pid int, node, state, detail string) {
+func RecordStandbyState(pid int, client, node, state, detail string) {
 	standbyLock.Lock()
 	defer standbyLock.Unlock()
 
@@ -51,6 +52,9 @@ func RecordStandbyState(pid int, node, state, detail string) {
 				standbyList = append(standbyList[:i], standbyList[i+1:]...)
 			} else {
 				standbyList[i].Timestamp = nowStr
+				if client != "" {
+					standbyList[i].Client = client
+				}
 				standbyList[i].State = state
 				standbyList[i].Detail = detail
 			}
@@ -62,6 +66,7 @@ func RecordStandbyState(pid int, node, state, detail string) {
 		standbyList = append(standbyList, StandbyItem{
 			Timestamp: nowStr,
 			PID:       pid,
+			Client:    client,
 			Node:      node,
 			State:     state,
 			Detail:    detail,
@@ -69,10 +74,10 @@ func RecordStandbyState(pid int, node, state, detail string) {
 	}
 
 	// Đọc và đồng bộ IPC file
-	syncStandbyFile(pid, node, state, detail)
+	syncStandbyFile(pid, client, node, state, detail)
 }
 
-func syncStandbyFile(pid int, node, state, detail string) {
+func syncStandbyFile(pid int, client, node, state, detail string) {
 	var current []StandbyItem
 	if data, err := os.ReadFile(standbyQueueFilePath); err == nil {
 		_ = json.Unmarshal(data, &current)
@@ -86,6 +91,9 @@ func syncStandbyFile(pid int, node, state, detail string) {
 				current = append(current[:i], current[i+1:]...)
 			} else {
 				current[i].Timestamp = nowStr
+				if client != "" {
+					current[i].Client = client
+				}
 				current[i].State = state
 				current[i].Detail = detail
 			}
@@ -97,6 +105,7 @@ func syncStandbyFile(pid int, node, state, detail string) {
 		current = append(current, StandbyItem{
 			Timestamp: nowStr,
 			PID:       pid,
+			Client:    client,
 			Node:      node,
 			State:     state,
 			Detail:    detail,
@@ -234,6 +243,6 @@ func splitLines(data []byte) [][]byte {
 
 // RemoveStandbyItem xóa tiến trình khỏi danh sách chờ khi tiến trình thoát hoặc thức dậy thành công
 func RemoveStandbyItem(pid int) {
-	RecordStandbyState(pid, "", "removed", "")
+	RecordStandbyState(pid, "", "", "removed", "")
 }
 

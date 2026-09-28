@@ -83,16 +83,19 @@ func TestStandbyQueueTracking(t *testing.T) {
 	pid1 := 9991
 	pid2 := 9992
 
-	RecordStandbyState(pid1, "Proxy-US-1", "waiting", "RAM khả dụng còn 4MB, cần 5MB")
-	RecordStandbyState(pid2, "Proxy-US-2", "waiting", "RAM khả dụng còn 4MB, cần 5MB")
+	RecordStandbyState(pid1, "18:31:BF:1A:E6:83", "Proxy-US-1", "waiting", "RAM khả dụng còn 4MB, cần 5MB")
+	RecordStandbyState(pid2, "192.168.3.192", "Proxy-US-2", "waiting", "RAM khả dụng còn 4MB, cần 5MB")
 
 	q := GetStandbyQueue()
 	if len(q) != 2 {
 		t.Fatalf("expected 2 items in standby queue, got %d", len(q))
 	}
+	if q[0].Client != "18:31:BF:1A:E6:83" || q[1].Client != "192.168.3.192" {
+		t.Fatalf("unexpected clients in standby queue: %+v", q)
+	}
 
 	// PID1 thức dậy
-	RecordStandbyState(pid1, "Proxy-US-1", "waking", "Đủ RAM, tiến trình đang thức tỉnh")
+	RecordStandbyState(pid1, "18:31:BF:1A:E6:83", "Proxy-US-1", "waking", "Đủ RAM, tiến trình đang thức tỉnh")
 	q2 := GetStandbyQueue()
 	foundWaking := false
 	for _, it := range q2 {

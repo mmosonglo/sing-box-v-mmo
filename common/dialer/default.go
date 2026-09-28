@@ -153,6 +153,8 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 		dialer.Control = control.Append(dialer.Control, control.DisableUDPFragment())
 		listener.Control = control.Append(listener.Control, control.DisableUDPFragment())
 	}
+	// Tự động kẹp TCP MSS = 1420 trên mọi kết nối outbound TCP để triệt tiêu vỡ gói và chuẩn hóa TCP SYN
+	dialer.Control = control.Append(dialer.Control, ApplyMSSClamping())
 	var (
 		dialer4    = dialer
 		udpDialer4 = dialer

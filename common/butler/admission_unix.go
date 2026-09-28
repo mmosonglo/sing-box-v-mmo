@@ -3,16 +3,84 @@
 package butler
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"regexp"
 	"runtime"
 	runtimeDebug "runtime/debug"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
+
+var portSuffixRegex = regexp.MustCompile(`_(\d+)\.json$`)
+
+// resolvePasswallClientInfo tự động tìm MAC hoặc IP của client từ cấu trúc file của Passwall2
+func resolvePasswallClientInfo() string {
+	// 1. Lấy đường dẫn file config từ tham số dòng lệnh (-c hoặc --config)
+	var configPath string
+	for i, arg := range os.Args {
+		if (arg == "-c" || arg == "--config") && i+1 < len(os.Args) {
+			configPath = os.Args[i+1]
+			break
+		}
+	}
+	if configPath == "" {
+		return ""
+	}
+
+	// 2. Trích xuất cổng redir ở cuối tên file (vd: vmmo_usa20_TCP_UDP_DNS_11201.json -> 11201)
+	base := filepath.Base(configPath)
+	matches := portSuffixRegex.FindStringSubmatch(base)
+	if len(matches) < 2 {
+		return ""
+	}
+	redirPort := matches[1]
+
+	// 3. Tra cứu RULE_ID trong /tmp/etc/passwall2/var
+	varFile, err := os.Open("/tmp/etc/passwall2/var")
+	if err != nil {
+		return ""
+	}
+	defer varFile.Close()
+
+	var ruleID string
+	targetVal := `="` + redirPort + `"`
+	scanner := bufio.NewScanner(varFile)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "ACL_") && strings.HasSuffix(line, targetVal) {
+			// Format: ACL_cfg1f30ec_redir_port="11201"
+			parts := strings.Split(line, "_")
+			if len(parts) >= 2 {
+				ruleID = parts[1]
+				break
+			}
+		}
+	}
+
+	if ruleID == "" {
+		return ""
+	}
+
+	// 4. Đọc MAC hoặc IP từ /tmp/etc/passwall2/acl/<RULE_ID>/source_list
+	sourcePath := filepath.Join("/tmp/etc/passwall2/acl", ruleID, "source_list")
+	data, err := os.ReadFile(sourcePath)
+	if err != nil {
+		return ""
+	}
+
+	content := strings.TrimSpace(string(data))
+	// Chuẩn hóa: bỏ tiền tố "mac:" hoặc "ip:" để LuCI nhận diện sạch sẽ
+	content = strings.TrimPrefix(content, "mac:")
+	content = strings.TrimPrefix(content, "ip:")
+	return content
+}
 
 const (
 	StartupLockPath       = "/tmp/sing-box-startup.lock"
@@ -64,7 +132,8 @@ func AcquireStartupGate(ctx context.Context) (func(), error) {
 		if predictedRemainingKB >= EmergencyReserveRAMKB {
 			// Đủ RAM an toàn -> Nếu trước đó đang trong hàng đợi thì báo thức tỉnh
 			if inStandby {
-				RecordStandbyState(pid, "", "waking", "Đủ RAM, tiến trình đang thức tỉnh và nạp cấu hình...")
+				clientInfo := resolvePasswallClientInfo()
+				RecordStandbyState(pid, clientInfo, "", "waking", "Đủ RAM, tiến trình đang thức tỉnh và nạp cấu hình...")
 			}
 			break
 		}
@@ -75,8 +144,9 @@ func AcquireStartupGate(ctx context.Context) (func(), error) {
 		sleepDuration := InitialRetryInterval
 		if time.Since(startTime) >= InitialWaitDuration {
 			inStandby = true
+			clientInfo := resolvePasswallClientInfo()
 			detailMsg := fmt.Sprintf("RAM khả dụng còn %dMB, cần %dMB (+8MB đệm). Đang ngủ chờ RAM...", availKB/1024, estimatedCostKB/1024)
-			RecordStandbyState(pid, "", "waiting", detailMsg)
+			RecordStandbyState(pid, clientInfo, "", "waiting", detailMsg)
 			sleepDuration = StandbySleepInterval
 		}
 
