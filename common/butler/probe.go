@@ -10,10 +10,13 @@ import (
 )
 
 // StartHealthProbe khởi chạy worker kiểm tra sức khỏe proxy ngầm:
-// - Cực nhẹ: sử dụng HTTP 204 (không giải mã payload, không tải file).
-// - Chu kỳ: 30 giây / lần (timeout 3 giây).
-// - Nếu chết: ghi nhận vào danh sách dead proxy qua RecordDeadProxyState để báo lên LuCI đổi viền đỏ.
-// - Nếu sống lại: tự động gỡ bỏ khỏi danh sách.
+// 1. Chờ tiến trình khởi động hoàn chỉnh và kết nối mạng/VPN thực sự ổn định:
+//    - Đợi tối thiểu 15 giây.
+//    - Cộng thêm jitter so-le theo PID (pid % 10 giây) để các tiến trình không kiểm tra cùng một lúc.
+// 2. Tối ưu Zero-Overhead:
+//    - Sử dụng HTTP 204 (Plain HTTP cp.cloudflare.com) không handshake TLS, không payload.
+//    - Khi proxy bình thường: kiểm tra thư thả mỗi 60 giây, hoàn toàn ZERO DISK I/O (không ghi đĩa).
+//    - Khi proxy chết: kiểm tra lại mỗi 15 giây để khi mạng có lại thì gỡ viền đỏ ngay lập tức.
 func StartHealthProbe(ctx context.Context, detour N.Dialer, nodeTag string) {
 	if detour == nil {
 		return
@@ -23,17 +26,17 @@ func StartHealthProbe(ctx context.Context, detour N.Dialer, nodeTag string) {
 		pid := os.Getpid()
 		clientInfo := ResolvePasswallClientInfo()
 
-		// Đợi 5 giây đầu sau khi khởi động để kết nối VPN/proxy ổn định
+		// 1. Đợi tiến trình khởi động hoàn chỉnh, ổn định định tuyến và kết nối
+		// Cơ chế Jittering: 15 giây cơ bản + (PID % 10) giây để 20 node tản đều thời gian, không gây CPU Spike
+		initialWarmup := 15*time.Second + time.Duration(pid%10)*time.Second
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(5 * time.Second):
+		case <-time.After(initialWarmup):
 		}
 
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
+		isCurrentlyDead := false
 
-		// Kiểm tra lần đầu
 		checkOnce := func() {
 			probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 			defer cancel()
@@ -41,21 +44,30 @@ func StartHealthProbe(ctx context.Context, detour N.Dialer, nodeTag string) {
 			latencyMs, err := urltest.URLTest(probeCtx, "http://cp.cloudflare.com/generate_204", detour)
 			if err != nil {
 				// Proxy chết / Timeout
+				isCurrentlyDead = true
 				RecordDeadProxyState(pid, clientInfo, nodeTag, true, 0, err.Error())
 			} else {
 				// Proxy sống bình thường
+				isCurrentlyDead = false
 				RecordDeadProxyState(pid, clientInfo, nodeTag, false, int(latencyMs), "")
 			}
 		}
 
+		// Lượt kiểm tra đầu tiên sau khi đã ổn định hoàn toàn
 		checkOnce()
 
 		for {
+			// Chu kỳ thông minh: nếu đang chết thì check sau 15s để hồi phục nhanh; nếu đang sống tốt thì 60s/lần cực nhẹ
+			nextInterval := 60 * time.Second
+			if isCurrentlyDead {
+				nextInterval = 15 * time.Second
+			}
+
 			select {
 			case <-ctx.Done():
 				RemoveDeadProxyItem(pid)
 				return
-			case <-ticker.C:
+			case <-time.After(nextInterval):
 				checkOnce()
 			}
 		}

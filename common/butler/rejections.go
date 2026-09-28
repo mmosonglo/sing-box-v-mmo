@@ -266,10 +266,12 @@ func RecordDeadProxyState(pid int, client, node string, isDead bool, latencyMs i
 
 	nowStr := time.Now().Format("15:04:05")
 	found := false
+	stateChanged := false
 	for i := range deadProxyList {
 		if deadProxyList[i].PID == pid {
 			if !isDead {
 				deadProxyList = append(deadProxyList[:i], deadProxyList[i+1:]...)
+				stateChanged = true
 			} else {
 				deadProxyList[i].Timestamp = nowStr
 				if client != "" {
@@ -277,6 +279,7 @@ func RecordDeadProxyState(pid int, client, node string, isDead bool, latencyMs i
 				}
 				deadProxyList[i].LatencyMs = latencyMs
 				deadProxyList[i].Error = errMsg
+				stateChanged = true
 			}
 			found = true
 			break
@@ -291,9 +294,13 @@ func RecordDeadProxyState(pid int, client, node string, isDead bool, latencyMs i
 			LatencyMs: latencyMs,
 			Error:     errMsg,
 		})
+		stateChanged = true
 	}
 
-	syncDeadProxiesFile(pid, client, node, isDead, latencyMs, errMsg)
+	// Chỉ đồng bộ ra file khi có sự thay đổi trạng thái (Zero Disk I/O khi ổn định)
+	if stateChanged {
+		syncDeadProxiesFile(pid, client, node, isDead, latencyMs, errMsg)
+	}
 }
 
 func syncDeadProxiesFile(pid int, client, node string, isDead bool, latencyMs int, errMsg string) {
