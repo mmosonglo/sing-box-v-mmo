@@ -122,3 +122,39 @@ func TestStandbyQueueTracking(t *testing.T) {
 	}
 }
 
+func TestDeadProxiesTracking(t *testing.T) {
+	_ = os.Remove(deadProxiesFilePath)
+	defer os.Remove(deadProxiesFilePath)
+
+	pid1 := 8881
+	pid2 := 8882
+
+	// Ghi nhận pid1 bị chết proxy
+	RecordDeadProxyState(pid1, "192.168.3.195", "usa01_node", true, 0, "dial tcp timeout")
+	// Ghi nhận pid2 bị chết proxy
+	RecordDeadProxyState(pid2, "192.168.3.196", "usa02_node", true, 0, "connection refused")
+
+	deadList := GetDeadProxies()
+	if len(deadList) != 2 {
+		t.Fatalf("expected 2 dead proxies, got %d", len(deadList))
+	}
+	if deadList[0].Client != "192.168.3.195" || deadList[1].Client != "192.168.3.196" {
+		t.Fatalf("unexpected dead proxy list: %+v", deadList)
+	}
+
+	// PID1 sống lại
+	RecordDeadProxyState(pid1, "192.168.3.195", "usa01_node", false, 120, "")
+	deadList2 := GetDeadProxies()
+	if len(deadList2) != 1 || deadList2[0].PID != pid2 {
+		t.Fatalf("expected 1 dead proxy remaining (pid2), got %+v", deadList2)
+	}
+
+	// PID2 dọn dẹp lúc thoát
+	RemoveDeadProxyItem(pid2)
+	deadList3 := GetDeadProxies()
+	if len(deadList3) != 0 {
+		t.Fatalf("expected 0 dead proxies after cleanup, got %d", len(deadList3))
+	}
+}
+
+

@@ -38,6 +38,7 @@ type ButlerStatus struct {
 	CPUTempC               int               `json:"cpu_temp_c,omitempty"`
 	Rejections             []RejectionRecord `json:"rejections,omitempty"`
 	StandbyQueue           []StandbyItem     `json:"standby_queue,omitempty"`
+	DeadProxies            []DeadProxyItem   `json:"dead_proxies,omitempty"`
 }
 
 var startTime = time.Now()
@@ -119,6 +120,7 @@ func writeStatusFile() {
 		CPUTempC:              cpuTemp,
 		Rejections:            GetRejections(),
 		StandbyQueue:          GetStandbyQueue(),
+		DeadProxies:           GetDeadProxies(),
 	}
 
 	data, err := json.MarshalIndent(status, "", "  ")

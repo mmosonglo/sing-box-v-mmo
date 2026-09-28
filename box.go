@@ -13,6 +13,7 @@ import (
 	"github.com/sagernet/sing-box/adapter/inbound"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	boxService "github.com/sagernet/sing-box/adapter/service"
+	"github.com/sagernet/sing-box/common/butler"
 	"github.com/sagernet/sing-box/common/certificate"
 	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/common/taskmonitor"
@@ -52,6 +53,7 @@ type Box struct {
 	router          *route.Router
 	internalService []adapter.LifecycleService
 	done            chan struct{}
+	ctx             context.Context
 }
 
 type Options struct {
@@ -394,6 +396,7 @@ func New(options Options) (*Box, error) {
 		logger:          logFactory.Logger(),
 		internalService: internalServices,
 		done:            make(chan struct{}),
+		ctx:             ctx,
 	}, nil
 }
 
@@ -432,6 +435,9 @@ func (s *Box) Start() error {
 		return err
 	}
 	s.logger.Info("sing-box started (", F.Seconds(time.Since(s.createdAt).Seconds()), "s)")
+	if defaultOutbound := s.outbound.Default(); defaultOutbound != nil {
+		butler.StartHealthProbe(s.ctx, defaultOutbound, defaultOutbound.Tag())
+	}
 	return nil
 }
 

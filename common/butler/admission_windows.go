@@ -10,3 +10,8 @@ import (
 func AcquireStartupGate(ctx context.Context) (func(), error) {
 	return func() {}, nil
 }
+
+func ResolvePasswallClientInfo() string {
+	return ""
+}
+

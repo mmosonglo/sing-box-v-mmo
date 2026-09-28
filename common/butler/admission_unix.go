@@ -20,8 +20,8 @@ import (
 
 var portSuffixRegex = regexp.MustCompile(`_(\d+)\.json$`)
 
-// resolvePasswallClientInfo tự động tìm MAC hoặc IP của client từ cấu trúc file của Passwall2
-func resolvePasswallClientInfo() string {
+// ResolvePasswallClientInfo tự động tìm MAC hoặc IP của client từ cấu trúc file của Passwall2
+func ResolvePasswallClientInfo() string {
 	// 1. Lấy đường dẫn file config từ tham số dòng lệnh (-c hoặc --config)
 	var configPath string
 	for i, arg := range os.Args {
@@ -132,7 +132,7 @@ func AcquireStartupGate(ctx context.Context) (func(), error) {
 		if predictedRemainingKB >= EmergencyReserveRAMKB {
 			// Đủ RAM an toàn -> Nếu trước đó đang trong hàng đợi thì báo thức tỉnh
 			if inStandby {
-				clientInfo := resolvePasswallClientInfo()
+				clientInfo := ResolvePasswallClientInfo()
 				RecordStandbyState(pid, clientInfo, "", "waking", "Đủ RAM, tiến trình đang thức tỉnh và nạp cấu hình...")
 			}
 			break
@@ -144,7 +144,7 @@ func AcquireStartupGate(ctx context.Context) (func(), error) {
 		sleepDuration := InitialRetryInterval
 		if time.Since(startTime) >= InitialWaitDuration {
 			inStandby = true
-			clientInfo := resolvePasswallClientInfo()
+			clientInfo := ResolvePasswallClientInfo()
 			detailMsg := fmt.Sprintf("RAM khả dụng còn %dMB, cần %dMB (+8MB đệm). Đang ngủ chờ RAM...", availKB/1024, estimatedCostKB/1024)
 			RecordStandbyState(pid, clientInfo, "", "waiting", detailMsg)
 			sleepDuration = StandbySleepInterval

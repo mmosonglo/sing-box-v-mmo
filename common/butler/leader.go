@@ -92,6 +92,7 @@ func IsLeader() bool {
 func CleanupOnShutdown() {
 	isTerminated.Store(true)
 	RemoveStandbyItem(os.Getpid())
+	RemoveDeadProxyItem(os.Getpid())
 	leaderMutex.Lock()
 	defer leaderMutex.Unlock()
 

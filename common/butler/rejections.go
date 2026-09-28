@@ -23,12 +23,24 @@ type StandbyItem struct {
 	Detail    string `json:"detail"`
 }
 
+type DeadProxyItem struct {
+	Timestamp string `json:"timestamp"`
+	PID       int    `json:"pid"`
+	Client    string `json:"client,omitempty"` // Địa chỉ MAC hoặc IP bị ảnh hưởng
+	Node      string `json:"node,omitempty"`
+	LatencyMs int    `json:"latency_ms"`
+	Error     string `json:"error"`
+}
+
 var (
 	rejectionsLock sync.Mutex
 	rejectionsList []RejectionRecord
 
 	standbyLock sync.Mutex
 	standbyList []StandbyItem
+
+	deadProxyLock sync.Mutex
+	deadProxyList []DeadProxyItem
 )
 
 const (
@@ -36,6 +48,7 @@ const (
 	rejectionsLogFilePath = "/tmp/sing-box-rejections.log"
 	maxLogFileSize        = 32 * 1024 // 32KB trần an toàn tuyệt đối cho tmpfs RAM
 	standbyQueueFilePath  = "/tmp/sing-box-standby.json"
+	deadProxiesFilePath   = "/tmp/sing-box-dead.json"
 )
 
 // RecordStandbyState cập nhật trạng thái của tiến trình trong hàng chờ thức tỉnh
@@ -244,5 +257,109 @@ func splitLines(data []byte) [][]byte {
 // RemoveStandbyItem xóa tiến trình khỏi danh sách chờ khi tiến trình thoát hoặc thức dậy thành công
 func RemoveStandbyItem(pid int) {
 	RecordStandbyState(pid, "", "", "removed", "")
+}
+
+// RecordDeadProxyState ghi nhận hoặc gỡ bỏ trạng thái proxy bị chết/mất mạng
+func RecordDeadProxyState(pid int, client, node string, isDead bool, latencyMs int, errMsg string) {
+	deadProxyLock.Lock()
+	defer deadProxyLock.Unlock()
+
+	nowStr := time.Now().Format("15:04:05")
+	found := false
+	for i := range deadProxyList {
+		if deadProxyList[i].PID == pid {
+			if !isDead {
+				deadProxyList = append(deadProxyList[:i], deadProxyList[i+1:]...)
+			} else {
+				deadProxyList[i].Timestamp = nowStr
+				if client != "" {
+					deadProxyList[i].Client = client
+				}
+				deadProxyList[i].LatencyMs = latencyMs
+				deadProxyList[i].Error = errMsg
+			}
+			found = true
+			break
+		}
+	}
+	if !found && isDead {
+		deadProxyList = append(deadProxyList, DeadProxyItem{
+			Timestamp: nowStr,
+			PID:       pid,
+			Client:    client,
+			Node:      node,
+			LatencyMs: latencyMs,
+			Error:     errMsg,
+		})
+	}
+
+	syncDeadProxiesFile(pid, client, node, isDead, latencyMs, errMsg)
+}
+
+func syncDeadProxiesFile(pid int, client, node string, isDead bool, latencyMs int, errMsg string) {
+	var current []DeadProxyItem
+	if data, err := os.ReadFile(deadProxiesFilePath); err == nil {
+		_ = json.Unmarshal(data, &current)
+	}
+
+	found := false
+	nowStr := time.Now().Format("15:04:05")
+	for i := range current {
+		if current[i].PID == pid {
+			if !isDead {
+				current = append(current[:i], current[i+1:]...)
+			} else {
+				current[i].Timestamp = nowStr
+				if client != "" {
+					current[i].Client = client
+				}
+				current[i].LatencyMs = latencyMs
+				current[i].Error = errMsg
+			}
+			found = true
+			break
+		}
+	}
+	if !found && isDead {
+		current = append(current, DeadProxyItem{
+			Timestamp: nowStr,
+			PID:       pid,
+			Client:    client,
+			Node:      node,
+			LatencyMs: latencyMs,
+			Error:     errMsg,
+		})
+	}
+
+	if len(current) == 0 {
+		_ = os.Remove(deadProxiesFilePath)
+	} else {
+		if data, err := json.Marshal(current); err == nil {
+			_ = os.WriteFile(deadProxiesFilePath+".tmp", data, 0o644)
+			_ = os.Rename(deadProxiesFilePath+".tmp", deadProxiesFilePath)
+		}
+	}
+}
+
+// GetDeadProxies trả về danh sách các proxy/node đang bị đứt mạng hoặc timeout
+func GetDeadProxies() []DeadProxyItem {
+	deadProxyLock.Lock()
+	defer deadProxyLock.Unlock()
+
+	if data, err := os.ReadFile(deadProxiesFilePath); err == nil {
+		var list []DeadProxyItem
+		if err := json.Unmarshal(data, &list); err == nil && len(list) > 0 {
+			return list
+		}
+	}
+
+	res := make([]DeadProxyItem, len(deadProxyList))
+	copy(res, deadProxyList)
+	return res
+}
+
+// RemoveDeadProxyItem dọn dẹp trạng thái dead proxy khi tiến trình thoát
+func RemoveDeadProxyItem(pid int) {
+	RecordDeadProxyState(pid, "", "", false, 0, "")
 }
 
